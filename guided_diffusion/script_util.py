@@ -3,10 +3,9 @@ import inspect
 
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-from .unet import SuperResModel, UNetModel_newpreview, UNetModel_v1preview, EncoderUNetModel, UNetModel_MedSegDiffV2
+from .unet import EncoderUNetModel, UNetModel_MedSegDiffV2, SuperResModel, UNetModel_newpreview, UNetModel_v1preview
 
 NUM_CLASSES = 2
-
 
 def diffusion_defaults():
     """
