@@ -224,6 +224,8 @@ class TrainLoop:
         cond={}
         if batch_2_5d is not None:
             cond["x_2_5d"] = batch_2_5d
+        else:
+            cond["x_2_5d"] = th.zeros_like(batch)
         sample = self.forward_backward(batch, cond)
         took_step = self.mp_trainer.optimize(self.opt)
         if took_step:
@@ -255,18 +257,18 @@ class TrainLoop:
             )
 
             if last_batch or not self.use_ddp:
-                losses1 = compute_losses()
+                losses, sample = compute_losses()
 
             else:
                 with self.ddp_model.no_sync():
-                    losses1 = compute_losses()
+                    losses, sample = compute_losses()
 
             if isinstance(self.schedule_sampler, LossAwareSampler):
                 self.schedule_sampler.update_with_local_losses(
-                    t, losses1["loss"].detach()
+                    t, losses["loss"].detach()
                 )
-            losses = losses1
-            sample = losses1["sample"]
+            # losses = losses1
+            # sample = losses1["sample"]
 
             # Combine losses using the new weights
             loss = (losses["loss_seg"] * self.seg_loss_weight * weights +
@@ -274,13 +276,13 @@ class TrainLoop:
                     losses['loss_bce'] * self.bce_loss_weight * weights).mean()
 
             log_loss_dict(
-                self.diffusion, t, {k: v * weights for k, v in losses.items() if k != "sample"}
+                self.diffusion, t, {k: v * weights for k, v in losses.items()}
             )
             self.mp_trainer.backward(loss)
             for name, param in self.ddp_model.named_parameters():
                 if param.grad is None:
                     print(name)
-            return  sample
+        return sample
 
     def _update_ema(self):
         for rate, params in zip(self.ema_rate, self.ema_params):
