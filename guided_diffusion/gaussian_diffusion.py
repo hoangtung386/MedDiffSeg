@@ -136,13 +136,15 @@ class GaussianDiffusion:
         model_mean_type,
         model_var_type,
         loss_type,
-        dpm_solver,
         rescale_timesteps=False,
+        rescale_learned_sigmas=False,
+        dpm_solver=False,
     ):
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
         self.loss_type = loss_type
         self.rescale_timesteps = rescale_timesteps
+        self.rescale_learned_sigmas = rescale_learned_sigmas
         self.dpm_solver = dpm_solver
 
         # Use float64 for accuracy.
@@ -1051,12 +1053,13 @@ class GaussianDiffusion:
 
             # model_output = (cal > 0.5) * (model_output >0.5) * model_output if 2. * (cal*model_output).sum() / (cal+model_output).sum() < 0.75 else model_output
             # terms["loss_diff"] = nn.BCELoss(model_output, target)
-            terms["loss_diff"] = mean_flat((target - model_output) ** 2 )
+            terms["loss_seg"] = mean_flat((target - model_output) ** 2 )
             terms["loss_cal"] = mean_flat((res - cal) ** 2)
+            terms["loss_bce"] = th.tensor(0.0).to(cal.device)
             # terms["loss_cal"] = nn.BCELoss()(cal.type(th.float), res.type(th.float)) 
             # terms["mse"] = (terms["mse_diff"] + terms["mse_cal"]) / 2.
             
-            terms["loss"] = terms["loss_diff"] + terms["loss_cal"]
+            terms["loss"] = terms["loss_seg"] + terms["loss_cal"]
             if "vb" in terms:
                 terms["loss"] += terms["vb"] 
 
