@@ -13,8 +13,8 @@ class BRATSDataset(torch.utils.data.Dataset):
         directory is expected to contain some folder structure:
                   if some subfolder contains only files, all of these
                   files are assumed to have a name like
-                  brats_train_001_XXX_123_w.nii.gz
-                  where XXX is one of t1, t1ce, t2, flair, seg
+                  BraTS2021_00000_flair.nii.gz
+                  where the last part before extension is one of t1, t1ce, t2, flair, seg
                   we assume these five files belong to the same image
                   seg is supposed to contain the segmentation
         '''
@@ -37,12 +37,15 @@ class BRATSDataset(torch.utils.data.Dataset):
                 datapoint = dict()
                 # extract all files as channels
                 for f in files:
-                    seqtype = f.split('_')[3]
+                    seqtype = f.split('_')[2].split('.')[0]  # Fix: Parse chuẩn BraTS (index 2)
                     datapoint[seqtype] = os.path.join(root, f)
-                assert set(datapoint.keys()) == self.seqtypes_set, \
-                    f'datapoint is incomplete, keys are {datapoint.keys()}'
-                self.database.append(datapoint)
-
+                # Debug: Print để check (xóa sau khi fix)
+                print(f"Folder {root}: found modalities {set(datapoint.keys())}")
+                if set(datapoint.keys()) == self.seqtypes_set:
+                    self.database.append(datapoint)
+                else:
+                    print(f"Skipped {root}: missing modalities, expected {self.seqtypes_set}")
+    
     def __getitem__(self, x):
         out = []
         filedict = self.database[x]
@@ -80,8 +83,8 @@ class BRATSDataset3D(torch.utils.data.Dataset):
         directory is expected to contain some folder structure:
                   if some subfolder contains only files, all of these
                   files are assumed to have a name like
-                  brats_train_001_XXX_123_w.nii.gz
-                  where XXX is one of t1, t1ce, t2, flair, seg
+                  BraTS2021_00000_flair.nii.gz
+                  where the last part before extension is one of t1, t1ce, t2, flair, seg
                   we assume these five files belong to the same image
                   seg is supposed to contain the segmentation
         '''
@@ -104,11 +107,14 @@ class BRATSDataset3D(torch.utils.data.Dataset):
                 datapoint = dict()
                 # extract all files as channels
                 for f in files:
-                    seqtype = f.split('_')[3].split('.')[0]
+                    seqtype = f.split('_')[2].split('.')[0]  # Fix: Parse chuẩn BraTS (index 2)
                     datapoint[seqtype] = os.path.join(root, f)
-                assert set(datapoint.keys()) == self.seqtypes_set, \
-                    f'datapoint is incomplete, keys are {datapoint.keys()}'
-                self.database.append(datapoint)
+                # Debug: Print để check (xóa sau khi fix)
+                # print(f"Folder {root}: found modalities {set(datapoint.keys())}")
+                if set(datapoint.keys()) == self.seqtypes_set:
+                    self.database.append(datapoint)
+                else:
+                    print(f"Skipped {root}: missing modalities, expected {self.seqtypes_set}")
     
     def __len__(self):
         return len(self.database) * 155
@@ -167,6 +173,3 @@ class BRATSDataset3D(torch.utils.data.Dataset):
             return (batch_image, label_2d, virtual_path)
         else:
             return (batch_image, label_2d, virtual_path)
-
-
-
