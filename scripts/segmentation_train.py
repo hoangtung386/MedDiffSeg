@@ -16,8 +16,8 @@ from guided_diffusion.script_util import (
 import torch as th
 from pathlib import Path
 from guided_diffusion.train_util import TrainLoop
-from visdom import Visdom
-viz = Visdom(port=8850)
+# from visdom import Visdom
+# viz = Visdom(port=8850)
 import torchvision.transforms as transforms
 
 def main():
@@ -107,7 +107,7 @@ def create_argparser():
         weight_decay=0.0,
         lr_anneal_steps=0,
         batch_size=1,
-        microbatch=-1,  # -1 disables microbatches
+        microbatch=1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=100,
         save_interval=5000,
