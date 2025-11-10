@@ -869,7 +869,8 @@ class UNetModel_MedSegDiffV2(nn.Module):
                 input_block_chans.append(ch)
                 ds *= 2
         
-        self.ss_former = SS_Former(ch, ch)
+        bottleneck_ch = ch
+        self.ss_former = SS_Former(bottleneck_ch, bottleneck_ch)
 
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
@@ -894,15 +895,15 @@ class UNetModel_MedSegDiffV2(nn.Module):
         )
 
         # --- Conditioning Models ---
-        self.hwm = Generic_UNet(self.in_channels - 1, 16, ch, 4, anchor_out=True)
+        self.hwm = Generic_UNet(self.in_channels - 1, 16, bottleneck_ch, 4, anchor_out=True)
         
         self.encoder_2_5d = Generic_UNet(1, 8, 128, 4, conv_op=nn.Conv3d, norm_op=nn.GroupNorm, norm_op_kwargs={'num_groups': 8, 'eps': 1e-5, 'affine': True}, num_conv_per_stage=1)
-        self.decoder_2d = Generic_UNet(128, 8, ch, 4, conv_op=nn.Conv2d, norm_op=nn.GroupNorm, norm_op_kwargs={'num_groups': 8, 'eps': 1e-5, 'affine': True}, num_conv_per_stage=1)
-        self.sea = SymmetryEnhancedAttention(ch)
+        self.decoder_2d = Generic_UNet(128, 8, bottleneck_ch, 4, conv_op=nn.Conv2d, norm_op=nn.GroupNorm, norm_op_kwargs={'num_groups': 8, 'eps': 1e-5, 'affine': True}, num_conv_per_stage=1)
+        self.sea = SymmetryEnhancedAttention(128)
         self.cal_head = nn.Sequential(
-            normalization(ch),
+            normalization(bottleneck_ch),
             nn.SiLU(),
-            conv_nd(dims, ch, 1, 1)
+            conv_nd(dims, bottleneck_ch, 1, 1)
         )
 
     def forward(self, x, timesteps, y=None, x_2_5d=None):
