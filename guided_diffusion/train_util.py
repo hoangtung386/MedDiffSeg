@@ -227,14 +227,14 @@ class TrainLoop:
         self.log_step()
         return sample
 
-    def forward_backward(self, batch, cond):
+    def forward_backward(self, batch, model_kwargs):
 
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
             micro_cond = {
                 k: v[i : i + self.microbatch].to(dist_util.dev())
-                for k, v in cond.items()
+                for k, v in model_kwargs.items()
             }
 
             last_batch = (i + self.microbatch) >= batch.shape[0]
