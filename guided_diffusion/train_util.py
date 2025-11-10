@@ -198,55 +198,44 @@ class TrainLoop:
             if batch_2_5d is not None:
                 batch_2_5d = batch_2_5d.unsqueeze(1)
 
-            self.run_step(batch_2d, cond, batch_2_5d)
+        self.run_step(batch, cond)
 
-            if self.step % self.log_interval == 0:
-                logger.dumpkvs()
-            if self.step % self.save_interval == 0:
-                self.save()
-                # Run for a finite amount of time in integration tests.
-                if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
-                    return
-            self.step += 1
-        # Save the last checkpoint if it wasn't already saved.
-        if (self.step - 1) % self.save_interval != 0:
-            self.save()
-
-    def run_step(self, batch, cond, batch_2_5d):
-        batch = th.cat((batch, cond), dim=1)
-
-        model_kwargs = {}
-        if batch_2_5d is not None:
-            model_kwargs["x_2_5d"] = batch_2_5d
-        
-        sample = self.forward_backward(batch, model_kwargs)
+    def run_step(self, batch, cond):
+        self.forward_backward(batch, cond)
         took_step = self.mp_trainer.optimize(self.opt)
         if took_step:
             self._update_ema()
         self._anneal_lr()
         self.log_step()
-        return sample
 
-    def forward_backward(self, batch, model_kwargs):
-
+    def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
-            micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
-                for k, v in model_kwargs.items()
-            }
+            micro_cond = cond[i : i + self.microbatch].to(dist_util.dev())
+            
+            # Unpack 2.5D data if available
+            if isinstance(micro, (list, tuple)):
+                micro_2d, micro_2_5d = micro
+                micro_2_5d = micro_2_5d.unsqueeze(1)
+            else:  # Fallback for old dataloader
+                micro_2d = micro
+                micro_2_5d = None
 
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            t, weights = self.schedule_sampler.sample(micro_2d.shape[0], dist_util.dev())
+
+            model_kwargs = {}
+            if micro_2_5d is not None:
+                model_kwargs["x_2_5d"] = micro_2_5d
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses_segmentation,
                 self.ddp_model,
                 self.classifier,
-                micro,
+                th.cat((micro_2d, micro_cond), dim=1),
                 t,
-                model_kwargs=micro_cond,
+                model_kwargs=model_kwargs,
             )
 
             if last_batch or not self.use_ddp:
