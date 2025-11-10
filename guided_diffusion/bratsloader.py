@@ -13,8 +13,8 @@ class BRATSDataset(torch.utils.data.Dataset):
         directory is expected to contain some folder structure:
                   if some subfolder contains only files, all of these
                   files are assumed to have a name like
-                  BraTS2021_00000_flair.nii.gz
-                  where the last part before extension is one of t1, t1ce, t2, flair, seg
+                  brats_train_001_XXX_123_w.nii.gz
+                  where XXX is one of t1, t1ce, t2, flair, seg
                   we assume these five files belong to the same image
                   seg is supposed to contain the segmentation
         '''
@@ -34,18 +34,27 @@ class BRATSDataset(torch.utils.data.Dataset):
             # if there are no subdirs, we have data
             if not dirs:
                 files.sort()
+                # Filter out non-.nii/.nii.gz files
+                files = [f for f in files if f.endswith('.nii.gz') or f.endswith('.nii')]
+                
+                if len(files) == 0:
+                    continue
+                    
                 datapoint = dict()
                 # extract all files as channels
                 for f in files:
-                    seqtype = f.split('_')[2].split('.')[0]  # Fix: Parse chuẩn BraTS (index 2)
-                    datapoint[seqtype] = os.path.join(root, f)
-                # Debug: Print để check (xóa sau khi fix)
-                print(f"Folder {root}: found modalities {set(datapoint.keys())}")
+                    parts = f.split('_')
+                    if len(parts) > 3:
+                        try:
+                            seqtype = parts[3].split('.')[0]
+                            datapoint[seqtype] = os.path.join(root, f)
+                        except IndexError:
+                            print(f"Warning: Cannot parse filename {f}, skipping...")
+                            continue
+                
                 if set(datapoint.keys()) == self.seqtypes_set:
                     self.database.append(datapoint)
-                else:
-                    print(f"Skipped {root}: missing modalities, expected {self.seqtypes_set}")
-    
+
     def __getitem__(self, x):
         out = []
         filedict = self.database[x]
@@ -83,8 +92,8 @@ class BRATSDataset3D(torch.utils.data.Dataset):
         directory is expected to contain some folder structure:
                   if some subfolder contains only files, all of these
                   files are assumed to have a name like
-                  BraTS2021_00000_flair.nii.gz
-                  where the last part before extension is one of t1, t1ce, t2, flair, seg
+                  brats_train_001_XXX_123_w.nii.gz
+                  where XXX is one of t1, t1ce, t2, flair, seg
                   we assume these five files belong to the same image
                   seg is supposed to contain the segmentation
         '''
@@ -104,17 +113,28 @@ class BRATSDataset3D(torch.utils.data.Dataset):
             # if there are no subdirs, we have data
             if not dirs:
                 files.sort()
+                # Filter out non-.nii/.nii.gz files
+                files = [f for f in files if f.endswith('.nii.gz') or f.endswith('.nii')]
+                
+                if len(files) == 0:
+                    continue
+                    
                 datapoint = dict()
                 # extract all files as channels
                 for f in files:
-                    seqtype = f.split('_')[2].split('.')[0]  # Fix: Parse chuẩn BraTS (index 2)
-                    datapoint[seqtype] = os.path.join(root, f)
-                # Debug: Print để check (xóa sau khi fix)
-                # print(f"Folder {root}: found modalities {set(datapoint.keys())}")
+                    parts = f.split('_')
+                    if len(parts) > 3:
+                        try:
+                            seqtype = parts[3].split('.')[0]
+                            datapoint[seqtype] = os.path.join(root, f)
+                        except IndexError:
+                            print(f"Warning: Cannot parse filename {f}, skipping...")
+                            continue
+                
                 if set(datapoint.keys()) == self.seqtypes_set:
                     self.database.append(datapoint)
-                else:
-                    print(f"Skipped {root}: missing modalities, expected {self.seqtypes_set}")
+        
+        print(f"Loaded {len(self.database)} complete patient scans")
     
     def __len__(self):
         return len(self.database) * 155
@@ -132,44 +152,49 @@ class BRATSDataset3D(torch.utils.data.Dataset):
             nib_img = nibabel.load(filedict[seqtype])
             volumes[seqtype] = torch.tensor(nib_img.get_fdata())
 
-        # --- Create 2D data (center slice) ---
-        image_2d_modalities = [volumes[s][..., slice_idx] for s in self.seqtypes if s != 'seg']
-        image_2d = torch.stack(image_2d_modalities)
+        # Modalities for image (exclude seg if present)
+        mod_seq = self.seqtypes if self.test_flag else self.seqtypes[:-1]
 
-        # --- Create 2.5D data (stack of slices from one modality) ---
-        # Use flair, fallback to the first available modality
-        vol_2_5d = volumes.get('flair', volumes[self.seqtypes[0]])
-        num_slices_2_5d = 3
-        half_slices = num_slices_2_5d // 2
+        # Create 2.5D data: 3 slices around the center for each modality, stacked as channels
+        # This combines 2D (single slice multi-mod) and 2.5D (multi-slice per mod) into 12-channel input
+        num_slices_per_mod = 3
+        half = num_slices_per_mod // 2
+        image_channels = []
+        for mod in mod_seq:
+            vol = volumes[mod]
+            slices_mod = []
+            for i in range(-half, half + 1):
+                idx = slice_idx + i
+                clamped_idx = np.clip(idx, 0, vol.shape[2] - 1)
+                slices_mod.append(vol[..., clamped_idx])
+            stack_mod = torch.stack(slices_mod, dim=0)  # (3, H, W)
+            image_channels.append(stack_mod)
 
-        slices_for_stack = []
-        for i in range(slice_idx - half_slices, slice_idx + half_slices + 1):
-            clamped_idx = np.clip(i, 0, vol_2_5d.shape[2] - 1)
-            slices_for_stack.append(vol_2_5d[..., clamped_idx])
+        # Concatenate all modality stacks into single image tensor: (4*3=12, H, W)
+        image = torch.cat(image_channels, dim=0)  # (12, H, W)
 
-        image_2_5d = torch.stack(slices_for_stack, dim=0).unsqueeze(0)  # Shape: (1, D, H, W)
-
-        # --- Handle label and test mode ---
+        # Handle label
         if self.test_flag:
-            label_2d = torch.zeros_like(image_2d[:1])
+            label = image[:1]  # Dummy label matching first channel for consistency with original
         else:
             label_vol = volumes['seg']
-            label_2d = label_vol[..., slice_idx].unsqueeze(0)
-            label_2d = torch.where(label_2d > 0, 1, 0).float()
+            label_slice = label_vol[..., slice_idx]
+            label = torch.where(label_slice > 0, 1, 0).float()[None, ...]  # (1, H, W)
 
-        # --- Apply transformations ---
+        # Apply transformations consistently
         if self.transform:
             state = torch.get_rng_state()
-            image_2d = self.transform(image_2d)
+            image = self.transform(image)
+            torch.set_rng_state(state)
             if not self.test_flag:
-                torch.set_rng_state(state)
-                label_2d = self.transform(label_2d)
+                label = self.transform(label)
 
-        # --- Final output structure ---
-        batch_image = (image_2d, image_2_5d)
+        # Virtual path
         virtual_path = path.split('.nii')[0] + "_slice" + str(slice_idx) + ".nii"
 
+        # Return structure matching original: (image, label_or_image, path)
         if self.test_flag:
-            return (batch_image, label_2d, virtual_path)
+            return (image, image, virtual_path)
         else:
-            return (batch_image, label_2d, virtual_path)
+            return (image, label, virtual_path)
+    
