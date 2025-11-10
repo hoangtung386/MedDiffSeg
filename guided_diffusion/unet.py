@@ -1780,3 +1780,4 @@ class UNetModel_newpreview(nn.Module):
         h = h.type(x.dtype)
         out = self.out(h)
         return out, cal
+    
