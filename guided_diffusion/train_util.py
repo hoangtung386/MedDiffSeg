@@ -201,6 +201,10 @@ class TrainLoop:
                         batch_2d = batch
                         batch_2_5d = None
 
+            # Thêm một chiều (dimension) vào batch_2_5d để nó có shape 5D, phù hợp với yêu cầu của encoder_2_5d.
+            if batch_2_5d is not None:
+                batch_2_5d = batch_2_5d.unsqueeze(1)
+
             self.run_step(batch_2d, cond, batch_2_5d)
 
            
