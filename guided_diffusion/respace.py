@@ -136,9 +136,12 @@ class _WrappedModel:
         if self.rescale_timesteps:
             new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
         
-        # Explicitly pass x_2_5d if it exists in kwargs
-        if 'x_2_5d' in kwargs:
-            return self.model(x, new_ts, x_2_5d=kwargs['x_2_5d'])
+        # Pop x_2_5d from kwargs to avoid passing it twice
+        x_2_5d = kwargs.pop('x_2_5d', None)
+        
+        # Call the model with the correct arguments
+        if x_2_5d is not None:
+            return self.model(x, new_ts, x_2_5d=x_2_5d, **kwargs)
         else:
             return self.model(x, new_ts, **kwargs)
 

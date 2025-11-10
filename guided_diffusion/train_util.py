@@ -173,43 +173,33 @@ class TrainLoop:
             self.opt.load_state_dict(state_dict)
 
     def run_loop(self):
-        i = 0
         data_iter = iter(self.dataloader)
         while (
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
-
-
             try:
-                    batch, cond, name = next(data_iter)
-                    # Unpack 2.5D data if available
-                    if isinstance(batch, (list, tuple)):
-                        batch_2d, batch_2_5d = batch
-                    else: # Fallback for old dataloader
-                        batch_2d = batch
-                        batch_2_5d = None
-
+                batch, cond, name = next(data_iter)
             except StopIteration:
-                    # StopIteration is thrown if dataset ends
-                    # reinitialize data loader
-                    data_iter = iter(self.dataloader)
-                    batch, cond, name = next(data_iter)
-                    if isinstance(batch, (list, tuple)):
-                        batch_2d, batch_2_5d = batch
-                    else: # Fallback for old dataloader
-                        batch_2d = batch
-                        batch_2_5d = None
+                # StopIteration is thrown if dataset ends
+                # reinitialize data loader
+                data_iter = iter(self.dataloader)
+                batch, cond, name = next(data_iter)
 
-            # Thêm một chiều (dimension) vào batch_2_5d để nó có shape 5D, phù hợp với yêu cầu của encoder_2_5d.
+            # Unpack 2.5D data if available
+            if isinstance(batch, (list, tuple)):
+                batch_2d, batch_2_5d = batch
+            else:  # Fallback for old dataloader
+                batch_2d = batch
+                batch_2_5d = None
+
+            # Add a channel dimension to the 2.5D batch to make it 5D,
+            # suitable for the 2.5D encoder.
             if batch_2_5d is not None:
                 batch_2_5d = batch_2_5d.unsqueeze(1)
 
             self.run_step(batch_2d, cond, batch_2_5d)
 
-           
-            i += 1
-          
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
@@ -223,14 +213,13 @@ class TrainLoop:
             self.save()
 
     def run_step(self, batch, cond, batch_2_5d):
-        batch=th.cat((batch, cond), dim=1)
+        batch = th.cat((batch, cond), dim=1)
 
-        cond={}
+        model_kwargs = {}
         if batch_2_5d is not None:
-            cond["x_2_5d"] = batch_2_5d
-        else:
-            cond["x_2_5d"] = th.zeros_like(batch)
-        sample = self.forward_backward(batch, cond)
+            model_kwargs["x_2_5d"] = batch_2_5d
+        
+        sample = self.forward_backward(batch, model_kwargs)
         took_step = self.mp_trainer.optimize(self.opt)
         if took_step:
             self._update_ema()

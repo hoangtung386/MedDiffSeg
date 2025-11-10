@@ -38,6 +38,12 @@ def main():
         tran_list = [transforms.Resize((args.image_size,args.image_size)),]
         transform_train = transforms.Compose(tran_list)
 
+        ds = BRATSDataset(args.data_dir, transform_train, test_flag=False)
+        args.in_ch = 5
+    elif args.data_name == 'BRATS3D':
+        tran_list = [transforms.Resize((args.image_size,args.image_size)),]
+        transform_train = transforms.Compose(tran_list)
+
         ds = BRATSDataset3D(args.data_dir, transform_train, test_flag=False)
         args.in_ch = 5
     elif any(Path(args.data_dir).glob("*\*.nii.gz")):
