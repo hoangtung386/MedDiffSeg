@@ -13,8 +13,8 @@ class BRATSDataset(torch.utils.data.Dataset):
         directory is expected to contain some folder structure:
                   if some subfolder contains only files, all of these
                   files are assumed to have a name like
-                  brats_train_001_XXX_123_w.nii.gz
-                  where XXX is one of t1, t1ce, t2, flair, seg
+                  BraTS2021_00002_seg.nii.gz
+                  where the last part before extension is one of t1, t1ce, t2, flair, seg
                   we assume these five files belong to the same image
                   seg is supposed to contain the segmentation
         '''
@@ -43,15 +43,16 @@ class BRATSDataset(torch.utils.data.Dataset):
                 datapoint = dict()
                 # extract all files as channels
                 for f in files:
-                    parts = f.split('_')
-                    if len(parts) > 3:
-                        try:
-                            seqtype = parts[3].split('.')[0]
-                            datapoint[seqtype] = os.path.join(root, f)
-                        except IndexError:
-                            print(f"Warning: Cannot parse filename {f}, skipping...")
-                            continue
+                    try:
+                        seqtype = f.split('_')[2].split('.')[0]
+                        datapoint[seqtype] = os.path.join(root, f)
+                    except IndexError:
+                        print(f"Warning: Cannot parse filename {f}, skipping...")
+                        continue
                 
+                if len(datapoint) > 0 and set(datapoint.keys()) != self.seqtypes_set:
+                    continue
+                    
                 if set(datapoint.keys()) == self.seqtypes_set:
                     self.database.append(datapoint)
 
@@ -86,14 +87,15 @@ class BRATSDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.database)
 
+
 class BRATSDataset3D(torch.utils.data.Dataset):
     def __init__(self, directory, transform, test_flag=False):
         '''
         directory is expected to contain some folder structure:
                   if some subfolder contains only files, all of these
                   files are assumed to have a name like
-                  brats_train_001_XXX_123_w.nii.gz
-                  where XXX is one of t1, t1ce, t2, flair, seg
+                  BraTS2021_00002_seg.nii.gz
+                  where the last part before extension is one of t1, t1ce, t2, flair, seg
                   we assume these five files belong to the same image
                   seg is supposed to contain the segmentation
         '''
@@ -122,15 +124,16 @@ class BRATSDataset3D(torch.utils.data.Dataset):
                 datapoint = dict()
                 # extract all files as channels
                 for f in files:
-                    parts = f.split('_')
-                    if len(parts) > 3:
-                        try:
-                            seqtype = parts[3].split('.')[0]
-                            datapoint[seqtype] = os.path.join(root, f)
-                        except IndexError:
-                            print(f"Warning: Cannot parse filename {f}, skipping...")
-                            continue
+                    try:
+                        seqtype = f.split('_')[2].split('.')[0]
+                        datapoint[seqtype] = os.path.join(root, f)
+                    except IndexError:
+                        print(f"Warning: Cannot parse filename {f}, skipping...")
+                        continue
                 
+                if len(datapoint) > 0 and set(datapoint.keys()) != self.seqtypes_set:
+                    continue
+                    
                 if set(datapoint.keys()) == self.seqtypes_set:
                     self.database.append(datapoint)
         
@@ -152,49 +155,48 @@ class BRATSDataset3D(torch.utils.data.Dataset):
             nib_img = nibabel.load(filedict[seqtype])
             volumes[seqtype] = torch.tensor(nib_img.get_fdata())
 
-        # Modalities for image (exclude seg if present)
-        mod_seq = self.seqtypes if self.test_flag else self.seqtypes[:-1]
+        # --- Create 2D data (center slice) with all 4 modalities ---
+        image_2d_modalities = []
+        for s in self.seqtypes:
+            if s != 'seg':
+                image_2d_modalities.append(volumes[s][..., slice_idx])
+        image_2d = torch.stack(image_2d_modalities)
 
-        # Create 2.5D data: 3 slices around the center for each modality, stacked as channels
-        # This combines 2D (single slice multi-mod) and 2.5D (multi-slice per mod) into 12-channel input
-        num_slices_per_mod = 3
-        half = num_slices_per_mod // 2
-        image_channels = []
-        for mod in mod_seq:
-            vol = volumes[mod]
-            slices_mod = []
-            for i in range(-half, half + 1):
-                idx = slice_idx + i
-                clamped_idx = np.clip(idx, 0, vol.shape[2] - 1)
-                slices_mod.append(vol[..., clamped_idx])
-            stack_mod = torch.stack(slices_mod, dim=0)  # (3, H, W)
-            image_channels.append(stack_mod)
+        # --- Create 2.5D data (stack of 3 consecutive slices from flair) ---
+        vol_2_5d = volumes.get('flair', volumes[self.seqtypes[0]])
+        num_slices_2_5d = 3
+        half_slices = num_slices_2_5d // 2
 
-        # Concatenate all modality stacks into single image tensor: (4*3=12, H, W)
-        image = torch.cat(image_channels, dim=0)  # (12, H, W)
+        slices_for_stack = []
+        for i in range(slice_idx - half_slices, slice_idx + half_slices + 1):
+            clamped_idx = np.clip(i, 0, vol_2_5d.shape[2] - 1)
+            slices_for_stack.append(vol_2_5d[..., clamped_idx])
 
-        # Handle label
+        image_2_5d = torch.stack(slices_for_stack, dim=0)  # Shape: (3, H, W)
+
+        # --- Handle label ---
         if self.test_flag:
-            label = image[:1]  # Dummy label matching first channel for consistency with original
+            label_2d = image_2d  # Return image as label for test mode
         else:
             label_vol = volumes['seg']
-            label_slice = label_vol[..., slice_idx]
-            label = torch.where(label_slice > 0, 1, 0).float()[None, ...]  # (1, H, W)
+            label_2d = label_vol[..., slice_idx].unsqueeze(0)
+            label_2d = torch.where(label_2d > 0, 1, 0).float()
 
-        # Apply transformations consistently
+        # --- Apply transformations ---
         if self.transform:
             state = torch.get_rng_state()
-            image = self.transform(image)
-            torch.set_rng_state(state)
+            image_2d = self.transform(image_2d)
+            image_2_5d = self.transform(image_2_5d)
             if not self.test_flag:
-                label = self.transform(label)
+                torch.set_rng_state(state)
+                label_2d = self.transform(label_2d)
 
-        # Virtual path
+        # --- Final output structure ---
+        batch_image = (image_2d, image_2_5d)
         virtual_path = path.split('.nii')[0] + "_slice" + str(slice_idx) + ".nii"
 
-        # Return structure matching original: (image, label_or_image, path)
         if self.test_flag:
-            return (image, image, virtual_path)
-        else:
-            return (image, label, virtual_path)
+            return (batch_image, batch_image, virtual_path)
+        
+        return (batch_image, label_2d, virtual_path)
     
